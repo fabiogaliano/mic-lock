@@ -54,13 +54,17 @@ func getInputDevices() -> [AudioInputDevice] {
         var inputSize: UInt32 = 0
         guard AudioObjectGetPropertyDataSize(id, &inputChannelsAddress, 0, nil, &inputSize) == noErr else { continue }
 
-        let bufferListPtr = UnsafeMutablePointer<AudioBufferList>.allocate(capacity: Int(inputSize))
+        let bufferListPtr = UnsafeMutableRawPointer.allocate(
+            byteCount: Int(inputSize),
+            alignment: MemoryLayout<AudioBufferList>.alignment
+        )
         defer { bufferListPtr.deallocate() }
 
-        guard AudioObjectGetPropertyData(id, &inputChannelsAddress, 0, nil, &inputSize, bufferListPtr) == noErr else { continue }
+        let bufferList = bufferListPtr.bindMemory(to: AudioBufferList.self, capacity: 1)
+        guard AudioObjectGetPropertyData(id, &inputChannelsAddress, 0, nil, &inputSize, bufferList) == noErr else { continue }
 
-        let bufferList = bufferListPtr.pointee
-        let hasInput = bufferList.mNumberBuffers > 0 && bufferList.mBuffers.mNumberChannels > 0
+        let bufferListValue = bufferList.pointee
+        let hasInput = bufferListValue.mNumberBuffers > 0 && bufferListValue.mBuffers.mNumberChannels > 0
         guard hasInput else { continue }
 
         // Get unique ID

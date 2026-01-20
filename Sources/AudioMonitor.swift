@@ -90,6 +90,8 @@ func sampleAudio(
             completion(hasSignal)
         }
     } catch {
+        engine.stop()
+        inputNode.removeTap(onBus: 0)
         completion(false)
     }
 }
@@ -137,6 +139,8 @@ func sampleAudioContinuous(
             completion(sampleCount, signalCount)
         }
     } catch {
+        engine.stop()
+        inputNode.removeTap(onBus: 0)
         completion(0, 0)
     }
 }

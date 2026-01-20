@@ -41,6 +41,9 @@ class MicLock {
     private var primaryCheckTimer: Timer?
     private var skippedDevices: Set<String> = []
 
+    // Signals
+    private var termSignalSource: DispatchSourceSignal?
+
     // Output control
     var silent: Bool = false
 
@@ -55,11 +58,7 @@ class MicLock {
         self.silent = silent
         savePid(getpid())
 
-        signal(SIGTERM) { _ in
-            clearPid()
-            clearLock()
-            exit(0)
-        }
+        setupTerminationHandler()
 
         if let query = targetQuery {
             saveLock(query)
@@ -143,6 +142,7 @@ class MicLock {
 
     func startSilenceMonitoring() {
         guard targetDevice != nil else { return }
+        guard sampleTimer == nil && windowEndTimer == nil && monitor == nil else { return }
 
         accumulatedSilence = 0
         windowHadSignal = false
@@ -566,5 +566,18 @@ class MicLock {
                 if !silent { printError("Failed to set: " + target.name) }
             }
         }
+    }
+
+    private func setupTerminationHandler() {
+        signal(SIGTERM, SIG_IGN)
+        let source = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .main)
+        source.setEventHandler { [weak self] in
+            self?.stopSilenceMonitoring()
+            clearPid()
+            clearLock()
+            exit(0)
+        }
+        source.resume()
+        termSignalSource = source
     }
 }

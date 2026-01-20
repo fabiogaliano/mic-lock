@@ -232,6 +232,8 @@ func cmdStop() {
 private var watchLock: MicLock?
 private var watchInterruptCount = 0
 private var watchIsPrompting = false
+private var watchTermSignalSource: DispatchSourceSignal?
+private var watchIntSignalSource: DispatchSourceSignal?
 
 func cmdWatch(daemonMode: Bool = false) {
     if isDaemonRunning() { _ = stopDaemon() }
@@ -251,16 +253,22 @@ func cmdWatch(daemonMode: Bool = false) {
 
     if daemonMode {
         // Daemon mode: simple signal handling
-        signal(SIGTERM) { _ in
+        signal(SIGTERM, SIG_IGN)
+        let termSource = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .main)
+        termSource.setEventHandler {
             watchLock?.stopSilenceMonitoring()
             clearPid()
             clearLock()
             exit(0)
         }
+        termSource.resume()
+        watchTermSignalSource = termSource
         lock.start(silent: true)
     } else {
         // Interactive mode: Ctrl+C shows daemon prompt
-        signal(SIGINT) { _ in
+        signal(SIGINT, SIG_IGN)
+        let intSource = DispatchSource.makeSignalSource(signal: SIGINT, queue: .main)
+        intSource.setEventHandler {
             watchInterruptCount += 1
 
             // Double Ctrl+C = force quit
@@ -272,11 +280,10 @@ func cmdWatch(daemonMode: Bool = false) {
             // Already prompting? Ignore
             if watchIsPrompting { return }
 
-            // Show prompt on main thread
-            DispatchQueue.main.async {
-                showDaemonPrompt()
-            }
+            showDaemonPrompt()
         }
+        intSource.resume()
+        watchIntSignalSource = intSource
 
         lock.start(silent: false)
     }
