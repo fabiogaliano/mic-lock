@@ -12,6 +12,7 @@ func printUsage() {
     print("  diag <device>".accent + "     " + "Audio diagnostics".dim)
     print("  config".accent + "            " + "Settings".dim)
     print("  alias [name]".accent + "      " + "Manage aliases".dim)
+    print("  startup".accent + "           " + "Manage login startup".dim)
 }
 
 // MARK: - Main
@@ -103,6 +104,9 @@ case "alias", "aliases":
 
 case "config":
     cmdConfig(args)
+
+case "startup":
+    cmdStartup(args)
 
 case "completion":
     let shell = args.count > 1 ? args[1] : "zsh"

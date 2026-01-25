@@ -558,6 +558,72 @@ func cmdConfig(_ args: [String]) {
     }
 }
 
+// MARK: - Startup
+
+func cmdStartup(_ args: [String]) {
+    let subcommand = args.count > 1 ? args[1].lowercased() : ""
+
+    switch subcommand {
+    case "enable":
+        if isStartupEnabled() {
+            printSubtle("Already enabled")
+            return
+        }
+        if enableStartup() {
+            printSuccess("Enabled startup")
+            printSubtle("miclock will run at login")
+        } else {
+            printError("Failed to enable startup")
+            exit(1)
+        }
+
+    case "disable":
+        if !isStartupEnabled() && !isStartupLoaded() {
+            printSubtle("Already disabled")
+            return
+        }
+        if disableStartup() {
+            printSuccess("Disabled startup")
+        } else {
+            printError("Failed to disable startup")
+            exit(1)
+        }
+
+    case "status":
+        let enabled = isStartupEnabled()
+        let loaded = isStartupLoaded()
+        print("")
+        print("  " + "Enabled".padding(toLength: 10, withPad: " ", startingAt: 0).dim + (enabled ? "yes".green : "no".dim))
+        print("  " + "Loaded".padding(toLength: 10, withPad: " ", startingAt: 0).dim + (loaded ? "yes".green : "no".dim))
+        if enabled {
+            print("  " + "Plist".padding(toLength: 10, withPad: " ", startingAt: 0).dim + launchAgentPath.path.dim)
+        }
+
+    default:
+        // No args or unknown: show status + usage
+        let enabled = isStartupEnabled()
+        let loaded = isStartupLoaded()
+
+        print("")
+        print("Startup".primary)
+        print("")
+        print("  " + "Status".padding(toLength: 10, withPad: " ", startingAt: 0).dim, terminator: "")
+        if enabled && loaded {
+            print("enabled".green + " (running)")
+        } else if enabled {
+            print("enabled".yellow + " (not loaded)")
+        } else {
+            print("disabled".dim)
+        }
+        print("")
+        print("  " + "enable".accent + "   " + "Start miclock at login".dim)
+        print("  " + "disable".accent + "  " + "Remove from login items".dim)
+        print("  " + "status".accent + "   " + "Show current status".dim)
+        print("")
+        printSubtle("Usage: miclock startup <enable|disable|status>")
+    }
+}
+
 // MARK: - Completion
 
 let zshCompletion = #"""

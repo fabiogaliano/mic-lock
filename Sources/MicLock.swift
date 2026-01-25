@@ -10,6 +10,15 @@ enum MicLockState {
     case checkingPrimary  // Temporarily sampling primary to see if it's back
 }
 
+// MARK: - Timing Constants
+
+private enum Timing {
+    static let debounceInterval: TimeInterval = 0.05    // 50ms - rapid device change filter
+    static let deviceSettleDelay: TimeInterval = 0.5    // 500ms - wait for device to settle
+    static let enforceRetryDelay: TimeInterval = 0.1    // 100ms - retry setting device
+    static let maxEnforceRetries = 3                    // max attempts to set device
+}
+
 // MARK: - MicLock
 
 class MicLock {
@@ -40,6 +49,10 @@ class MicLock {
     // Timers
     private var primaryCheckTimer: Timer?
     private var skippedDevices: Set<String> = []
+
+    // Pending device change (for race condition during .checkingPrimary)
+    private var pendingDeviceChange = false
+    private var lastDeviceChangeTime: Date?
 
     // Signals
     private var termSignalSource: DispatchSourceSignal?
@@ -315,7 +328,7 @@ class MicLock {
 
         _ = setDefaultInputDevice(device.id)
 
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+        DispatchQueue.main.asyncAfter(deadline: .now() + Timing.deviceSettleDelay) { [weak self] in
             self?.sampleFallbackCandidate(device: device, query: query, fallbackIndex: fallbackIndex)
         }
     }
@@ -337,13 +350,14 @@ class MicLock {
 
     private func commitToFallback(device: AudioInputDevice, query: String) {
         state = .fallback
+        processPendingDeviceChange()
         targetDevice = device
         currentQuery = query
         enforceTarget()
 
         startPrimaryCheckTimer()
 
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+        DispatchQueue.main.asyncAfter(deadline: .now() + Timing.deviceSettleDelay) { [weak self] in
             self?.startSilenceMonitoring()
         }
     }
@@ -390,6 +404,7 @@ class MicLock {
                 if !self.silent { printSuccess("\(query) has signal!") }
 
                 self.state = .normal
+                self.processPendingDeviceChange()
                 self.stopPrimaryCheckTimer()
                 self.targetDevice = device
                 self.currentQuery = query
@@ -399,7 +414,7 @@ class MicLock {
 
                 self.enforceTarget()
 
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+                DispatchQueue.main.asyncAfter(deadline: .now() + Timing.deviceSettleDelay) { [weak self] in
                     self?.startSilenceMonitoring()
                 }
             } else {
@@ -411,6 +426,7 @@ class MicLock {
 
     private func returnToFallback() {
         state = .fallback
+        processPendingDeviceChange()
 
         guard let fallback = targetDevice else {
             if !silent { printWarning("No fallback set, searching...") }
@@ -422,7 +438,7 @@ class MicLock {
         if devices.contains(where: { $0.id == fallback.id }) {
             if !silent { print(Sym.arrowLeft + " Returning to: ".dim + (currentQuery ?? fallback.name).accent) }
             enforceTarget()
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+            DispatchQueue.main.asyncAfter(deadline: .now() + Timing.deviceSettleDelay) { [weak self] in
                 self?.startSilenceMonitoring()
             }
         } else {
@@ -476,14 +492,14 @@ class MicLock {
                     if !silent { print(Sym.plus + " " + (currentQuery ?? current.name).accent + " connected".dim) }
                     enforceTarget()
                     stopSilenceMonitoring()
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+                    DispatchQueue.main.asyncAfter(deadline: .now() + Timing.deviceSettleDelay) { [weak self] in
                         self?.startSilenceMonitoring()
                     }
                 } else if previousQuery != currentQuery {
                     if !silent { print(Sym.arrowUp + " Priority: ".dim + (currentQuery ?? current.name).accent) }
                     enforceTarget()
                     stopSilenceMonitoring()
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+                    DispatchQueue.main.asyncAfter(deadline: .now() + Timing.deviceSettleDelay) { [weak self] in
                         self?.startSilenceMonitoring()
                     }
                 }
@@ -503,8 +519,43 @@ class MicLock {
     private func onDefaultInputChanged() {
         guard let currentID = getDefaultInputDeviceID() else { return }
 
-        if state == .checkingPrimary { return }
+        // Debounce rapid device changes
+        if let lastTime = lastDeviceChangeTime,
+           Date().timeIntervalSince(lastTime) < Timing.debounceInterval {
+            return
+        }
+        lastDeviceChangeTime = Date()
 
+        // Don't process during sampling, but remember that a change happened
+        if state == .checkingPrimary {
+            pendingDeviceChange = true
+            return
+        }
+
+        handleDeviceChange(currentID: currentID)
+    }
+
+    /// Process any device change that occurred during .checkingPrimary state
+    private func processPendingDeviceChange() {
+        guard pendingDeviceChange else { return }
+        pendingDeviceChange = false
+
+        // Stop monitoring before device change to avoid AVAudioEngine crash
+        stopSilenceMonitoring()
+
+        if let currentID = getDefaultInputDeviceID() {
+            handleDeviceChange(currentID: currentID)
+        }
+
+        // Restart monitoring after device change settles
+        if targetQuery == nil && settings.enableSilenceDetection {
+            DispatchQueue.main.asyncAfter(deadline: .now() + Timing.deviceSettleDelay) { [weak self] in
+                self?.startSilenceMonitoring()
+            }
+        }
+    }
+
+    private func handleDeviceChange(currentID: AudioDeviceID) {
         if state == .fallback {
             guard let target = targetDevice else { return }
             if currentID != target.id {
@@ -548,7 +599,7 @@ class MicLock {
         }
     }
 
-    func enforceTarget() {
+    func enforceTarget(retryCount: Int = 0) {
         if let query = targetQuery {
             guard let target = findDevice(matching: query) else { return }
             targetDevice = target
@@ -563,7 +614,14 @@ class MicLock {
             if setDefaultInputDevice(target.id) {
                 if !silent { printSuccess("Set: " + target.name) }
             } else {
-                if !silent { printError("Failed to set: " + target.name) }
+                // Retry with delay (device may not be ready)
+                if retryCount < Timing.maxEnforceRetries {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + Timing.enforceRetryDelay) { [weak self] in
+                        self?.enforceTarget(retryCount: retryCount + 1)
+                    }
+                } else {
+                    if !silent { printError("Failed to set: " + target.name) }
+                }
             }
         }
     }

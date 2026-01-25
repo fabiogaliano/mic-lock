@@ -19,6 +19,13 @@ class AudioMonitor {
         let inputNode = engine.inputNode
         let format = inputNode.outputFormat(forBus: 0)
 
+        // Validate format before installing tap (device may have changed)
+        // This prevents "Input HW format is invalid" crash
+        guard format.sampleRate > 0, format.channelCount > 0 else {
+            self.engine = nil
+            return
+        }
+
         inputNode.installTap(onBus: 0, bufferSize: 4096, format: format) { [weak self] buffer, _ in
             guard let channelData = buffer.floatChannelData else { return }
             let frameLength = Int(buffer.frameLength)
@@ -67,6 +74,12 @@ func sampleAudio(
     let inputNode = engine.inputNode
     let format = inputNode.outputFormat(forBus: 0)
 
+    // Validate format (device may have changed)
+    guard format.sampleRate > 0, format.channelCount > 0 else {
+        completion(false)
+        return
+    }
+
     var hasSignal = false
 
     inputNode.installTap(onBus: 0, bufferSize: 4096, format: format) { buffer, _ in
@@ -112,6 +125,12 @@ func sampleAudioContinuous(
     let engine = AVAudioEngine()
     let inputNode = engine.inputNode
     let format = inputNode.outputFormat(forBus: 0)
+
+    // Validate format (device may have changed)
+    guard format.sampleRate > 0, format.channelCount > 0 else {
+        completion(0, 0)
+        return
+    }
 
     var sampleCount = 0
     var signalCount = 0

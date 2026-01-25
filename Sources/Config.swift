@@ -266,7 +266,7 @@ private func processExecutablePath(pid: Int32) -> String? {
     return path.withCString { realpath($0, nil).map { String(cString: $0) } }
 }
 
-private func currentExecutablePath() -> String {
+func currentExecutablePath() -> String {
     if let resolvedPath = Bundle.main.executablePath {
         return resolvedPath
     }
@@ -310,3 +310,4 @@ private func ensureConfigDir() -> Bool {
         return false
     }
 }
+
